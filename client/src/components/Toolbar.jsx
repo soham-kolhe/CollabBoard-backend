@@ -5,7 +5,8 @@ import {
   Circle as EllipseIcon,
   Trash2,
   Download,
-  Type
+  Type,
+  MoveUpRight,
 } from "lucide-react";
 
 const Toolbar = ({
@@ -15,6 +16,7 @@ const Toolbar = ({
   setTool,
   activeTool,
   onClear,
+  onDownload,
 }) => {
   return (
     <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 flex items-center justify-center gap-4 px-6 py-3 bg-white/80 backdrop-blur-sm shadow-xl border border-black rounded-full w-max">
@@ -29,6 +31,11 @@ const Toolbar = ({
           icon={<Eraser size={18} />}
           active={activeTool === "eraser"}
           onClick={() => setTool("eraser")}
+        />
+        <IconButton
+          icon={<MoveUpRight size={18} />}
+          active={activeTool === "arrow"}
+          onClick={() => setTool("arrow")}
         />
         <IconButton
           icon={<Square size={18} />}
@@ -82,7 +89,10 @@ const Toolbar = ({
         >
           <Trash2 size={18} />
         </button>
-        <button className="p-2.5 bg-black text-white hover:bg-gray-800 rounded-full transition-all shadow-md">
+        <button
+          onClick={onDownload}
+          className="p-2.5 bg-black text-white hover:bg-gray-800 rounded-full transition-all shadow-md"
+        >
           <Download size={18} />
         </button>
       </div>

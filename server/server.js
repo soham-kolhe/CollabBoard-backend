@@ -1,14 +1,17 @@
-const users = {};
 import express from "express";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import cors from "cors";
 import mongoose from "mongoose";
+import Drawing from "./models/Drawing.js";
 import dotenv from "dotenv";
 dotenv.config();
 
 const app = express();
 app.use(cors());
+
+const users = {};
+const roomAdmins = {};
 
 const server = createServer(app);
 
@@ -20,36 +23,116 @@ const io = new Server(server, {
   },
 });
 
+const getRoomUsers = (roomId) => {
+  return Object.entries(users)
+    .filter(([_, u]) => u.roomId === roomId)
+    .map(([socketId, u]) => ({
+      socketId,          // ✅ UNIQUE IDENTIFIER
+      name: u.userName,  // display only
+      role: u.role,
+      canDraw: u.canDraw,
+    }));
+};
+
 io.on("connection", (socket) => {
-  socket.on("join-room", ({ userName, roomId }) => {
+  socket.on("join-room", async ({ userName, roomId }) => {
+    // 1. Check for duplicate names in the same room
+    const isDuplicate = Object.values(users).some(
+      (u) =>
+        u.roomId === roomId &&
+        u.userName.toLowerCase() === userName.toLowerCase()
+    );
+
+    if (isDuplicate) {
+      socket.emit("error", "Username already taken in this room.");
+      return;
+    }
+
     socket.join(roomId);
-    users[socket.id] = { userName, roomId };
 
-    // Get all users in the specific room
-    const roomUsers = Object.values(users)
-      .filter((u) => u.roomId === roomId)
-      .map((u) => u.userName);
+    const savedDrawing = await Drawing.findOne({ roomId });
+    if (savedDrawing) {
+      socket.emit("load-canvas", savedDrawing.strokes);
+    }
 
-    // Tell everyone in the room (including the joiner) the new user list
-    io.to(roomId).emit("user_list", roomUsers);
+    // 2. Assign Admin role to the first person
+    let role = "User";
+    if (!roomAdmins[roomId]) {
+      roomAdmins[roomId] = socket.id;
+      role = "Admin";
+    }
+
+    users[socket.id] = { userName, roomId, role, canDraw: true };
+
+    socket.emit("joined", {
+      role,
+      userName,
+      roomId,
+    });
+
+    // 3. Send structured objects to the client
+    io.to(roomId).emit("user_list", getRoomUsers(roomId));
   });
+
+  socket.on("toggle-permission", ({ targetSocketId, roomId }) => {
+  const admin = users[socket.id];
+
+  if (!admin || admin.role !== "Admin") return;
+
+  const targetUser = users[targetSocketId];
+  if (!targetUser || targetUser.roomId !== roomId) return;
+
+  // Toggle permission
+  targetUser.canDraw = !targetUser.canDraw;
+
+  // Notify target user
+  io.to(targetSocketId).emit(
+    "permission-changed",
+    targetUser.canDraw
+  );
+
+  // Update everyone
+  io.to(roomId).emit("user_list", getRoomUsers(roomId));
+});
+
 
   socket.on("disconnect", () => {
     const user = users[socket.id];
     if (user) {
-      const { roomId } = user;
+      const { roomId, role } = user;
       delete users[socket.id];
 
-      const remainingUsers = Object.values(users)
-        .filter((u) => u.roomId === roomId)
-        .map((u) => u.userName);
+      // Reassign Admin if creator left
+      if (role === "Admin" && roomAdmins[roomId] === socket.id) {
+        delete roomAdmins[roomId];
+        const nextAdminId = Object.keys(users).find(
+          (id) => users[id].roomId === roomId
+        );
+        if (nextAdminId) {
+          roomAdmins[roomId] = nextAdminId;
+          users[nextAdminId].role = "Admin";
+        }
+      }
 
-      io.to(roomId).emit("user_list", remainingUsers);
+      io.to(roomId).emit("user_list", getRoomUsers(roomId));
     }
   });
 
-  // Ensure these broadcast events include the sender's data for OTHERS
-  socket.on("draw", (data) => socket.to(data.roomId).emit("draw", data));
+  socket.on("draw", async (data) => {
+    // 1️⃣ Broadcast to others (NO delay)
+    socket.to(data.roomId).emit("draw", data);
+
+    // 2️⃣ Save stroke to MongoDB
+    await Drawing.findOneAndUpdate(
+      { roomId: data.roomId },
+      {
+        $push: { strokes: data },
+        $set: { updatedAt: new Date() },
+      },
+      { upsert: true }
+    );
+  });
+
   socket.on("draw_shape", (data) =>
     socket.to(data.roomId).emit("draw_shape", data)
   );
@@ -58,8 +141,12 @@ io.on("connection", (socket) => {
     socket.to(data.roomId).emit("draw_text", data);
   });
 
-  socket.on("clear_canvas", (data) => {
-    socket.to(data.roomId).emit("clear_canvas");
+  socket.on("clear_canvas", ({ roomId }) => {
+    const user = users[socket.id];
+
+    if (!user || user.role !== "Admin") return;
+
+    io.to(roomId).emit("clear_canvas");
   });
 });
 

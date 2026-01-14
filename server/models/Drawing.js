@@ -1,9 +1,17 @@
-import mongoose from 'mongoose'; // Use import instead of require
+import mongoose from "mongoose";
 
 const DrawingSchema = new mongoose.Schema({
-  roomId: { type: String, required: true },
-  data: { type: String, required: true }, 
-  updatedAt: { type: Date, default: Date.now }
+  roomId: { type: String, required: true, unique: true },
+
+  strokes: {
+    type: Array,
+    default: [],
+  },
+
+  updatedAt: {
+    type: Date,
+    default: Date.now,
+  },
 });
 
-export default mongoose.model('Drawing', DrawingSchema); // Use export default
+export default mongoose.model("Drawing", DrawingSchema);

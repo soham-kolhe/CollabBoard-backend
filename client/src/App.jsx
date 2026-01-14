@@ -11,16 +11,30 @@ function App() {
   const [tool, setTool] = useState("pencil");
   const [color, setColor] = useState("#000000");
   const [lineWidth, setLineWidth] = useState(4);
-  const [roomId] = useState("123");
 
-  
   // Reference to the canvas to call clear methods
   const canvasRef = useRef(null);
-  
+
   useEffect(() => {
-    socket.emit("join-room", roomId);
-  }, [roomId]);
-  
+    if (user && socket) {
+      socket.emit("join-room", {
+        userName: user.userName,
+        roomId: user.roomId,
+      });
+    }
+  }, [user]);
+
+  useEffect(() => {
+    socket.on("joined", (data) => {
+      setUser((prev) => ({
+        ...prev,
+        role: data.role,
+      }));
+    });
+
+    return () => socket.off("joined");
+  }, []);
+
   const handleToolChange = (newTool) => {
     setTool(newTool);
     if (newTool === "text") {
@@ -33,22 +47,32 @@ function App() {
       setLineWidth(3);
     }
   };
-  
+
   if (!user) {
     return <Login onJoin={(userData) => setUser(userData)} />;
   }
 
-  const handleClearCanvas = () => {
-  const canvas = canvasRef.current;
-  const ctx = canvas.getContext("2d");
-  
-  // Clear locally
-  ctx.fillStyle = "white";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const handleClear = () => {
+    if (user.role !== "Admin") return;
 
-  // Tell everyone else to clear
-  socket.emit("clear_canvas", { roomId });
-};
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+
+    // Clear locally
+    ctx.fillStyle = "white";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Emit to others in the room
+    socket.emit("clear_canvas", { roomId: user.roomId });
+  };
+
+  const handleDownload = () => {
+    const canvas = canvasRef.current;
+    const link = document.createElement("a");
+    link.download = "whiteboard.png";
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+  };
 
   return (
     <div className="relative w-screen h-screen bg-white overflow-hidden">
@@ -59,7 +83,8 @@ function App() {
         setColor={setColor}
         lineWidth={lineWidth}
         setLineWidth={setLineWidth}
-        onClear={handleClearCanvas}
+        onClear={handleClear}
+        onDownload={handleDownload}
       />
 
       {/* We pass the ref to Board so App.js can "talk" to the canvas */}
@@ -71,6 +96,7 @@ function App() {
         socket={socket}
         roomId={user.roomId}
         userName={user.userName}
+        currentUserRole={user.role}
       />
     </div>
   );
