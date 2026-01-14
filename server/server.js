@@ -27,8 +27,8 @@ const getRoomUsers = (roomId) => {
   return Object.entries(users)
     .filter(([_, u]) => u.roomId === roomId)
     .map(([socketId, u]) => ({
-      socketId,          // ✅ UNIQUE IDENTIFIER
-      name: u.userName,  // display only
+      socketId, // ✅ UNIQUE IDENTIFIER
+      name: u.userName, // display only
       role: u.role,
       canDraw: u.canDraw,
     }));
@@ -50,9 +50,10 @@ io.on("connection", (socket) => {
 
     socket.join(roomId);
 
-    const savedDrawing = await Drawing.findOne({ roomId });
-    if (savedDrawing) {
-      socket.emit("load-canvas", savedDrawing.strokes);
+    const drawing = await Drawing.findOne({ roomId });
+
+    if (drawing && drawing.snapshot) {
+      socket.emit("load-canvas", drawing.snapshot);
     }
 
     // 2. Assign Admin role to the first person
@@ -75,26 +76,33 @@ io.on("connection", (socket) => {
   });
 
   socket.on("toggle-permission", ({ targetSocketId, roomId }) => {
-  const admin = users[socket.id];
+    const admin = users[socket.id];
 
-  if (!admin || admin.role !== "Admin") return;
+    if (!admin || admin.role !== "Admin") return;
 
-  const targetUser = users[targetSocketId];
-  if (!targetUser || targetUser.roomId !== roomId) return;
+    const targetUser = users[targetSocketId];
+    if (!targetUser || targetUser.roomId !== roomId) return;
 
-  // Toggle permission
-  targetUser.canDraw = !targetUser.canDraw;
+    // Toggle permission
+    targetUser.canDraw = !targetUser.canDraw;
 
-  // Notify target user
-  io.to(targetSocketId).emit(
-    "permission-changed",
-    targetUser.canDraw
-  );
+    // Notify target user
+    io.to(targetSocketId).emit("permission-changed", targetUser.canDraw);
 
-  // Update everyone
-  io.to(roomId).emit("user_list", getRoomUsers(roomId));
-});
+    // Update everyone
+    io.to(roomId).emit("user_list", getRoomUsers(roomId));
+  });
 
+  socket.on("save-snapshot", async ({ roomId, snapshot }) => {
+    await Drawing.findOneAndUpdate(
+      { roomId },
+      {
+        snapshot,
+        updatedAt: new Date(),
+      },
+      { upsert: true }
+    );
+  });
 
   socket.on("disconnect", () => {
     const user = users[socket.id];
@@ -118,19 +126,8 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("draw", async (data) => {
-    // 1️⃣ Broadcast to others (NO delay)
+  socket.on("draw", (data) => {
     socket.to(data.roomId).emit("draw", data);
-
-    // 2️⃣ Save stroke to MongoDB
-    await Drawing.findOneAndUpdate(
-      { roomId: data.roomId },
-      {
-        $push: { strokes: data },
-        $set: { updatedAt: new Date() },
-      },
-      { upsert: true }
-    );
   });
 
   socket.on("draw_shape", (data) =>
@@ -141,10 +138,16 @@ io.on("connection", (socket) => {
     socket.to(data.roomId).emit("draw_text", data);
   });
 
-  socket.on("clear_canvas", ({ roomId }) => {
+  socket.on("clear_canvas", async ({ roomId }) => {
     const user = users[socket.id];
-
     if (!user || user.role !== "Admin") return;
+
+    // Clear snapshot in DB
+    await Drawing.findOneAndUpdate(
+      { roomId },
+      { snapshot: null, updatedAt: new Date() },
+      { upsert: true }
+    );
 
     io.to(roomId).emit("clear_canvas");
   });

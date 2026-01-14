@@ -1,11 +1,15 @@
 import mongoose from "mongoose";
 
 const DrawingSchema = new mongoose.Schema({
-  roomId: { type: String, required: true, unique: true },
+  roomId: {
+    type: String,
+    required: true,
+    unique: true,
+  },
 
-  strokes: {
-    type: Array,
-    default: [],
+  snapshot: {
+    type: String, // base64 image
+    default: null,
   },
 
   updatedAt: {

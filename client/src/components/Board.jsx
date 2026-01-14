@@ -28,6 +28,14 @@ const Board = ({
     setIsDrawing(false);
   };
 
+  const saveSnapshot = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const snapshot = canvas.toDataURL("image/png");
+    socket.emit("save-snapshot", { roomId, snapshot });
+  };
+
   useEffect(() => {
     window.addEventListener("mouseup", stopDrawing);
     return () => window.removeEventListener("mouseup", stopDrawing);
@@ -138,40 +146,25 @@ const Board = ({
       ctx.fillText(text, x, y);
     });
 
-    socket.on("load-canvas", (strokes) => {
+    socket.on("load-canvas", (snapshot) => {
       const canvas = canvasRef.current;
       const ctx = canvas.getContext("2d");
 
-      // ✅ HARD RESET CANVAS
-      ctx.globalCompositeOperation = "source-over";
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = "white";
-      ctx.fillRect(0, 0, canvas.width, ctx.canvas.height);
-
-      // ✅ REPLAY STROKES IN ORDER
-      strokes.forEach((stroke) => {
-        ctx.beginPath();
-        ctx.globalCompositeOperation =
-          stroke.tool === "eraser" ? "destination-out" : "source-over";
-
-        ctx.strokeStyle = stroke.color;
-        ctx.lineWidth = stroke.lineWidth;
-        ctx.lineCap = "round";
-
-        ctx.moveTo(stroke.prevX, stroke.prevY);
-        ctx.lineTo(stroke.x, stroke.y);
-        ctx.stroke();
-      });
+      const img = new Image();
+      img.onload = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+      };
+      img.src = snapshot;
     });
 
-    const handleClear = () => {
+    socket.on("clear_canvas", () => {
       const canvas = canvasRef.current;
       const ctx = canvas.getContext("2d");
-      ctx.fillStyle = "white";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-    };
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    socket.on("clear_canvas", handleClear);
+      saveSnapshot();
+    });
 
     return () => {
       socket.off("user_list");
@@ -179,7 +172,7 @@ const Board = ({
       socket.off("draw_shape");
       socket.off("draw_text");
       socket.off("load-canvas");
-      socket.off("clear_canvas", handleClear);
+      socket.off("clear_canvas");
     };
   }, [socket, canvasRef]);
 
@@ -291,7 +284,7 @@ const Board = ({
         roomId,
       });
     }
-
+    saveSnapshot();
     setIsDrawing(false);
   };
 
@@ -315,6 +308,7 @@ const Board = ({
     });
 
     setTextState({ isTyping: false, x: 0, y: 0, text: "" });
+    saveSnapshot();
   };
 
   return (
