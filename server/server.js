@@ -138,6 +138,18 @@ io.on("connection", (socket) => {
     socket.to(data.roomId).emit("draw_text", data);
   });
 
+  socket.on("cursor-move", ({ x, y, roomId }) => {
+    const user = users[socket.id];
+    if (!user) return;
+
+    // send cursor position to everyone else
+    socket.to(roomId).emit("cursor-update", {
+      socketId: socket.id,
+      x,
+      y,
+    });
+  });
+
   socket.on("clear_canvas", async ({ roomId }) => {
     const user = users[socket.id];
     if (!user || user.role !== "Admin") return;
