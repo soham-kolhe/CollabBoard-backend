@@ -15,6 +15,7 @@ const DrawingSchema = new mongoose.Schema({
   updatedAt: {
     type: Date,
     default: Date.now,
+    index: { expires: '24h' } // Automatically deletes 24 hours after updatedAt
   },
 });
 

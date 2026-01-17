@@ -94,14 +94,18 @@ io.on("connection", (socket) => {
   });
 
   socket.on("save-snapshot", async ({ roomId, snapshot }) => {
-    await Drawing.findOneAndUpdate(
-      { roomId },
-      {
-        snapshot,
-        updatedAt: new Date(),
-      },
-      { upsert: true }
-    );
+    try {
+      await Drawing.findOneAndUpdate(
+        { roomId },
+        {
+          snapshot,
+          updatedAt: new Date(),
+        },
+        { upsert: true }
+      );
+    } catch (err) {
+      console.error("Snapshot save failed:", err);
+    }
   });
 
   socket.on("disconnect", () => {
@@ -154,14 +158,16 @@ io.on("connection", (socket) => {
     const user = users[socket.id];
     if (!user || user.role !== "Admin") return;
 
-    // Clear snapshot in DB
-    await Drawing.findOneAndUpdate(
-      { roomId },
-      { snapshot: null, updatedAt: new Date() },
-      { upsert: true }
-    );
+    try {
+      // Completely remove the document to free MongoDB storage
+      await Drawing.deleteOne({ roomId });
 
-    io.to(roomId).emit("clear_canvas");
+      // Broadcast clear signal to all active clients
+      io.to(roomId).emit("clear_canvas");
+      console.log(`Storage cleared for room: ${roomId}`);
+    } catch (err) {
+      console.error("Failed to delete drawing from DB:", err);
+    }
   });
 });
 

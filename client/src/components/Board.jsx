@@ -1,4 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef, useState} from "react";
+import UserList from "./UserList";
+import { getColorFromSocketId } from "../utils/colorUtils";
+import { useCanvas } from "../hooks/useCanvas";
+import { useCursors } from "../hooks/useCursors";
+import { useSocket } from "../hooks/useSocket";
 
 const Board = ({
   canvasRef,
@@ -9,34 +14,28 @@ const Board = ({
   roomId,
   userName,
   currentUserRole,
+  onDrawEnd,
 }) => {
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [startPos, setStartPos] = useState({ x: 0, y: 0 });
-  const [snapshot, setSnapshot] = useState(null);
+  /* ---------- State ---------- */
+  const [usersInRoom, setUsersInRoom] = useState([]);
+  const [canDraw, setCanDraw] = useState(true);
+
   const [textState, setTextState] = useState({
     isTyping: false,
     x: 0,
     y: 0,
     text: "",
   });
-  const [usersInRoom, setUsersInRoom] = useState([]);
-  const [canDraw, setCanDraw] = useState(true);
-  const [remoteCursors, setRemoteCursors] = useState({});
 
   const textAreaRef = useRef(null);
-  const stopDrawing = () => {
-    setIsDrawing(false);
-  };
 
-  const getColorFromSocketId = (socketId) => {
-    let hash = 0;
-    for (let i = 0; i < socketId.length; i++) {
-      hash = socketId.charCodeAt(i) + ((hash << 5) - hash);
-    }
+  /* ---------- Hooks ---------- */
+  const { remoteCursors, emitCursor, syncCursorsWithUsers } = useCursors(
+    socket,
+    roomId
+  );
 
-    const hue = Math.abs(hash) % 360;
-    return `hsl(${hue}, 75%, 55%)`;
-  };
+  useSocket(socket, canvasRef);
 
   const saveSnapshot = () => {
     const canvas = canvasRef.current;
@@ -46,323 +45,71 @@ const Board = ({
     socket.emit("save-snapshot", { roomId, snapshot });
   };
 
-  useEffect(() => {
-    window.addEventListener("mouseup", stopDrawing);
-    return () => window.removeEventListener("mouseup", stopDrawing);
-  }, []);
+  const { handleMouseDown, handleMouseMove, handleMouseUp, stopDrawing } =
+    useCanvas({
+      canvasRef,
+      tool,
+      color,
+      lineWidth,
+      socket,
+      roomId,
+      canDraw,
+      onDrawEnd: () => {
+        onDrawEnd(); // Handles local Undo/Redo state
+        saveSnapshot(); // ✅ New: Persists the canvas to MongoDB
+      },
+    });
 
+  /* ---------- Permissions ---------- */
   useEffect(() => {
     socket.on("permission-changed", (status) => {
       setCanDraw(status);
-      if (!status) {
-        setIsDrawing(false); // Stop any active drawing
-        alert("Admin Revoked Your Drawing Permissions.");
-      }
+      if (!status) alert("Admin revoked your drawing permission.");
     });
 
     return () => socket.off("permission-changed");
   }, [socket]);
 
+  /* ---------- User list ---------- */
   useEffect(() => {
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
-
-    // Set size once without using State
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-
-    ctx.fillStyle = "white";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-
-    // Do NOT add 'tool' or 'lineWidth' to this dependency array
-  }, [canvasRef]);
-
-  const drawArrow = (ctx, start, end) => {
-    const headLength = 15; // length of head in pixels
-    const dx = end.x - start.x;
-    const dy = end.y - start.y;
-    const angle = Math.atan2(dy, dx);
-
-    // Draw the main line
-    ctx.beginPath();
-    ctx.moveTo(start.x, start.y);
-    ctx.lineTo(end.x, end.y);
-    ctx.stroke();
-
-    // Draw the arrow head
-    ctx.beginPath();
-    ctx.moveTo(end.x, end.y);
-    ctx.lineTo(
-      end.x - headLength * Math.cos(angle - Math.PI / 6),
-      end.y - headLength * Math.sin(angle - Math.PI / 6)
-    );
-    ctx.moveTo(end.x, end.y);
-    ctx.lineTo(
-      end.x - headLength * Math.cos(angle + Math.PI / 6),
-      end.y - headLength * Math.sin(angle + Math.PI / 6)
-    );
-    ctx.stroke();
-  };
-
-  const drawActualShape = (ctx, tool, start, end) => {
-    if (tool === "rect") {
-      ctx.strokeRect(start.x, start.y, end.x - start.x, end.y - start.y);
-    } else if (tool === "ellipse") {
-      const rx = Math.abs(end.x - start.x);
-      const ry = Math.abs(end.y - start.y);
-      ctx.beginPath();
-      ctx.ellipse(start.x, start.y, rx, ry, 0, 0, 2 * Math.PI);
-      ctx.stroke();
-    } else if (tool === "arrow") {
-      drawArrow(ctx, start, end);
-    }
-  };
-
-  useEffect(() => {
-    if (!socket) return;
-
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
-
     socket.on("user_list", (users) => {
       setUsersInRoom(users);
-
-      setRemoteCursors((prev) => {
-        const updated = {};
-        users.forEach((u) => {
-          if (prev[u.socketId]) {
-            updated[u.socketId] = prev[u.socketId];
-          }
-        });
-        return updated;
-      });
+      syncCursorsWithUsers(users);
     });
 
-    socket.on("draw", (data) => {
-      const { x, y, prevX, prevY, tool, color, lineWidth } = data;
-      ctx.beginPath();
-      ctx.lineWidth = lineWidth;
-      ctx.lineCap = "round";
-      ctx.strokeStyle = tool === "eraser" ? "white" : color;
-      ctx.moveTo(prevX, prevY);
-      ctx.lineTo(x, y);
-      ctx.stroke();
-    });
+    return () => socket.off("user_list");
+  }, [socket, syncCursorsWithUsers]);
 
-    socket.on("draw_shape", (data) => {
-      const { startPos, endPos, tool, color, lineWidth } = data;
-      ctx.strokeStyle = color;
-      ctx.lineWidth = lineWidth;
-      drawActualShape(ctx, tool, startPos, endPos);
-    });
-
-    socket.on("draw_text", (data) => {
-      const { text, x, y, color, lineWidth } = data;
-      ctx.font = `${lineWidth * 2}px Arial`;
-      ctx.fillStyle = color;
-      ctx.textBaseline = "top";
-      ctx.fillText(text, x, y);
-    });
-
+  /* ---------- Load saved canvas (IMPORTANT) ---------- */
+  useEffect(() => {
     socket.on("load-canvas", (snapshot) => {
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext("2d");
-
-      const img = new Image();
-      img.onload = () => {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(img, 0, 0);
-      };
-      img.src = snapshot;
-    });
-
-    socket.on("cursor-update", (data) => {
-      setRemoteCursors((prev) => ({
-        ...prev,
-        [data.socketId]: {
-          x: data.x,
-          y: data.y,
-          userName: data.userName,
-          lastActive: Date.now(),
-        },
-      }));
-    });
-
-    // Remove cursor when a user leaves
-    socket.on("user_list", (users) => {
-      setUsersInRoom(users);
-
-      setRemoteCursors((prev) => {
-        const activeIds = users.map((u) => u.socketId);
-        return Object.fromEntries(
-          Object.entries(prev).filter(([id]) => activeIds.includes(id))
-        );
-      });
-    });
-
-    socket.on("clear_canvas", () => {
       const canvas = canvasRef.current;
       if (!canvas) return;
 
       const ctx = canvas.getContext("2d");
-      ctx.globalCompositeOperation = "source-over";
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const img = new Image();
 
-      // repaint white background (important)
-      ctx.fillStyle = "white";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      img.onload = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+      };
+
+      img.src = snapshot;
     });
 
-    return () => {
-      socket.off("user_list");
-      socket.off("draw");
-      socket.off("draw_shape");
-      socket.off("draw_text");
-      socket.off("load-canvas");
-      socket.off("cursor-update");
-      socket.off("clear_canvas");
-    };
+    return () => socket.off("load-canvas");
   }, [socket, canvasRef]);
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const now = Date.now();
-
-      setRemoteCursors((prev) => {
-        const updated = {};
-
-        Object.entries(prev).forEach(([id, cursor]) => {
-          if (now - cursor.lastActive < 3000) {
-            // ⏳ 3 seconds idle timeout
-            updated[id] = cursor;
-          }
-        });
-
-        return updated;
-      });
-    }, 1000); // check every second
-
-    return () => clearInterval(interval);
-  }, []);
-
+  /* ---------- Text tool focus ---------- */
   useEffect(() => {
     if (textState.isTyping && textAreaRef.current) {
       textAreaRef.current.focus();
     }
   }, [textState.isTyping]);
 
-  const handleMouseMove = (e) => {
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
-    const rect = canvas.getBoundingClientRect();
-
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    socket.emit("cursor-move", { x, y, roomId });
-
-    if (!canDraw || !isDrawing || tool === "text") return;
-
-    if (tool === "rect" || tool === "ellipse" || tool === "arrow") {
-      ctx.putImageData(snapshot, 0, 0);
-      ctx.strokeStyle = color;
-      ctx.lineWidth = lineWidth;
-      drawActualShape(ctx, tool, startPos, { x, y });
-      return;
-    }
-
-    if (tool === "pencil" || tool === "eraser") {
-      ctx.globalCompositeOperation =
-        tool === "eraser" ? "destination-out" : "source-over";
-
-      ctx.lineTo(x, y);
-      ctx.stroke();
-
-      socket.emit("draw", {
-        x,
-        y,
-        prevX: startPos.x,
-        prevY: startPos.y,
-        tool,
-        color,
-        lineWidth,
-        roomId,
-      });
-
-      setStartPos({ x, y });
-    }
-  };
-
-  const handleMouseDown = (e) => {
-    if (!canDraw) return;
-
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    if (tool === "text") {
-      // If we are already typing, bake the old text first
-      if (textState.isTyping && textState.text.length > 0) {
-        handleTextBake();
-      }
-
-      // Set typing to true and DON'T bake on blur for now
-      setTextState({
-        isTyping: true,
-        x: x,
-        y: y,
-        text: "",
-      });
-      return; // Stop here so drawing logic doesn't run
-    }
-
-    // DRAWING LOGIC FOR OTHER TOOLS
-    setIsDrawing(true);
-    setStartPos({ x, y });
-    const ctx = canvasRef.current.getContext("2d", {
-      willReadFrequently: true,
-    });
-    setSnapshot(
-      ctx.getImageData(0, 0, canvasRef.current.width, canvasRef.current.height)
-    );
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-
-    // ✅ REAL ERASER FIX
-    ctx.globalCompositeOperation =
-      tool === "eraser" ? "destination-out" : "source-over";
-
-    ctx.strokeStyle = color;
-    ctx.lineWidth = lineWidth;
-  };
-
-  const handleMouseUp = (e) => {
-    if (!isDrawing) return;
-
-    const rect = canvasRef.current.getBoundingClientRect();
-    const endPos = {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
-    };
-
-    if (tool === "rect" || tool === "ellipse" || tool === "arrow") {
-      socket.emit("draw_shape", {
-        startPos,
-        endPos,
-        tool,
-        color,
-        lineWidth,
-        roomId,
-      });
-    }
-    saveSnapshot();
-    setIsDrawing(false);
-  };
-
+  /* ---------- Text bake ---------- */
   const handleTextBake = () => {
-    if (textState.text.trim() === "") return;
+    if (!textState.text.trim()) return;
 
     const ctx = canvasRef.current.getContext("2d");
     ctx.font = `${lineWidth * 2}px Arial`;
@@ -370,7 +117,6 @@ const Board = ({
     ctx.textBaseline = "top";
     ctx.fillText(textState.text, textState.x, textState.y);
 
-    // EMIT TEXT TO OTHERS
     socket.emit("draw_text", {
       text: textState.text,
       x: textState.x,
@@ -384,6 +130,34 @@ const Board = ({
     saveSnapshot();
   };
 
+  /* ---------- Mouse wrapper (cursor emit) ---------- */
+  const handleMouseMoveWrapper = (e) => {
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    emitCursor(x, y);
+    handleMouseMove(e);
+  };
+
+  /* ---------- Mouse down wrapper (text tool) ---------- */
+  const handleMouseDownWrapper = (e) => {
+    if (tool === "text") {
+      const rect = canvasRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      if (textState.isTyping && textState.text) {
+        handleTextBake();
+      }
+
+      setTextState({ isTyping: true, x, y, text: "" });
+      return;
+    }
+
+    handleMouseDown(e);
+  };
+
   return (
     <div className="relative w-full h-full bg-white overflow-hidden">
       {/* Floating User Sidebar */}
@@ -391,7 +165,7 @@ const Board = ({
         {/* Header */}
         <div className="p-5 border-b border-gray-100 bg-gray-50/50">
           <h2 className="text-sm font-bold flex items-center gap-2 text-gray-700">
-            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />{" "}
             Collaborators
           </h2>
           <div className="flex items-center gap-1.5 mt-1">
@@ -404,162 +178,14 @@ const Board = ({
           </div>
         </div>
 
-        {/* User List Area */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
-          {usersInRoom.map((user, index) => (
-            <div
-              key={index}
-              className={`flex items-center justify-between p-2.5 rounded-2xl transition-all border ${
-                user?.name === userName
-                  ? "text-white shadow-md border-transparent"
-                  : "border-gray-100 hover:border-blue-200 text-gray-800"
-              }`}
-              style={{
-                backgroundColor:
-                  user?.name === userName
-                    ? getColorFromSocketId(user.socketId) // full color for "Me"
-                    : `${getColorFromSocketId(user.socketId)}20`, // light tint for others
-              }}
-            >
-              <div className="flex items-center gap-3 overflow-hidden">
-                {/* Avatar Icon */}
-                <div
-                  className={`w-8 h-8 shrink-0 rounded-full flex items-center justify-center text-[10px] font-black border ${
-                    user?.role === "Admin"
-                      ? "bg-amber-100 border-amber-300 text-amber-700"
-                      : user?.name === userName
-                      ? "bg-white/20 border-white/40 text-white"
-                      : "bg-gray-100 border-gray-200 text-gray-500"
-                  }`}
-                >
-                  {(user?.name?.charAt(0) || "?").toUpperCase()}
-                </div>
+        <UserList
+          usersInRoom={usersInRoom}
+          userName={userName}
+          currentUserRole={currentUserRole}
+          roomId={roomId}
+          socket={socket}
+        />
 
-                {/* User Details */}
-                <div className="overflow-hidden">
-                  <div className="flex items-center gap-2">
-                    {/* Username */}
-                    <p
-                      className="text-xs font-semibold truncate leading-tight"
-                      style={{
-                        color: user?.name === userName ? "#fff" : "#111",
-                      }}
-                    >
-                      {typeof user?.name === "string" ? user.name : "User"}
-                      {user?.name === userName && "(Me)"}
-                    </p>
-                  </div>
-                  <span
-                    className={`text-[8px] font-black uppercase tracking-tighter ${
-                      user?.name === userName
-                        ? "text-blue-100"
-                        : "text-gray-400"
-                    }`}
-                  >
-                    {user?.role || "User"}
-                  </span>
-                </div>
-              </div>
-
-              {/* Action Icons */}
-              <div className="flex items-center gap-1">
-                {/* Admin Toggle Permission Button */}
-                {currentUserRole === "Admin" && user?.name !== userName && (
-                  <button
-                    onClick={() =>
-                      socket.emit("toggle-permission", {
-                        targetSocketId: user.socketId,
-                        roomId,
-                      })
-                    }
-                    className={`p-1 rounded-lg transition-colors ${
-                      user?.canDraw
-                        ? "text-green-500 hover:bg-green-100"
-                        : "text-red-500 hover:bg-red-100"
-                    }`}
-                    title={user?.canDraw ? "Revoke Access" : "Grant Access"}
-                  >
-                    {user?.canDraw ? (
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <rect
-                          width="18"
-                          height="11"
-                          x="3"
-                          y="11"
-                          rx="2"
-                          ry="2"
-                        />
-                        <path d="M7 11V7a5 5 0 0 1 9.9-1" />
-                      </svg>
-                    ) : (
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <rect
-                          width="18"
-                          height="11"
-                          x="3"
-                          y="11"
-                          rx="2"
-                          ry="2"
-                        />
-                        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                      </svg>
-                    )}
-                  </button>
-                )}
-
-                {/* Admin Trophy */}
-                {user?.role === "Admin" && (
-                  <div
-                    className={
-                      user?.name === userName ? "text-white" : "text-amber-500"
-                    }
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="3"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
-                      <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
-                      <path d="M4 22h16" />
-                      <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
-                      <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
-                      <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z" />
-                    </svg>
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Footer Action */}
         <div className="p-3 bg-gray-50/80 border-t border-gray-100">
           <button
             onClick={() => navigator.clipboard.writeText(roomId)}
@@ -584,8 +210,9 @@ const Board = ({
         </div>
       </div>
 
+      {/* ---------- Canvas + cursors ---------- */}
       <div className="relative w-full h-full">
-        {/* Remote cursors */}
+        {/* Cursors */}
         <div className="absolute inset-0 pointer-events-none z-40">
           {Object.entries(remoteCursors).map(([id, pos]) => (
             <div
@@ -599,9 +226,7 @@ const Board = ({
             >
               <div
                 className="w-3 h-3 rounded-full border-2 border-white shadow-md"
-                style={{
-                  backgroundColor: getColorFromSocketId(id),
-                }}
+                style={{ backgroundColor: getColorFromSocketId(id) }}
               />
             </div>
           ))}
@@ -610,20 +235,18 @@ const Board = ({
         {/* Canvas */}
         <canvas
           ref={canvasRef}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
+          onMouseDown={handleMouseDownWrapper}
+          onMouseMove={handleMouseMoveWrapper}
           onMouseUp={handleMouseUp}
           onMouseLeave={stopDrawing}
-          className="block w-full h-full touch-none absolute inset-0 z-0"
+          className="absolute inset-0 w-full h-full"
           style={{ cursor: tool === "text" ? "text" : "crosshair" }}
         />
       </div>
-
-      {/* Text Input Overlay */}
+      {/* ---------- Text Input ---------- */}
       {textState.isTyping && (
         <textarea
-          autoFocus
-          placeholder="Type..."
+          ref={textAreaRef}
           value={textState.text}
           onChange={(e) => setTextState({ ...textState, text: e.target.value })}
           onKeyDown={(e) => {
@@ -634,21 +257,20 @@ const Board = ({
           }}
           style={{
             position: "absolute",
-            left: `${textState.x}px`,
-            top: `${textState.y}px`,
+            left: textState.x,
+            top: textState.y,
             fontSize: `${lineWidth * 2}px`,
-            color: color,
+            color,
             background: "transparent",
             border: "1px dashed #3b82f6",
-            zIndex: 1000,
-            minWidth: "100px",
             outline: "none",
             resize: "none",
-            padding: "0",
+            zIndex: 1000,
           }}
         />
       )}
     </div>
   );
 };
+
 export default Board;

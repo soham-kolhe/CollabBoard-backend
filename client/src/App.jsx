@@ -3,6 +3,7 @@ import Login from "./components/Login";
 import Toolbar from "./components/Toolbar";
 import Board from "./components/Board";
 import { io } from "socket.io-client";
+import { useUndoRedo } from "./hooks/useUndoRedo";
 
 const socket = io("http://localhost:5001");
 
@@ -14,6 +15,8 @@ function App() {
 
   // Reference to the canvas to call clear methods
   const canvasRef = useRef(null);
+
+  const { undo, redo, pushUndoState } = useUndoRedo(canvasRef);
 
   useEffect(() => {
     if (user && socket) {
@@ -53,8 +56,6 @@ function App() {
   }
 
   const handleClear = () => {
-    if (user.role !== "Admin") return;
-
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
 
@@ -62,6 +63,7 @@ function App() {
     ctx.fillStyle = "white";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+    pushUndoState();
     // Emit to others in the room
     socket.emit("clear_canvas", { roomId: user.roomId });
   };
@@ -85,6 +87,8 @@ function App() {
         setColor={setColor}
         lineWidth={lineWidth}
         setLineWidth={setLineWidth}
+        onUndo={undo}
+        onRedo={redo}
         onClear={handleClear}
         onDownload={handleDownload}
       />
@@ -92,6 +96,7 @@ function App() {
       {/* We pass the ref to Board so App.js can "talk" to the canvas */}
       <Board
         canvasRef={canvasRef}
+        onDrawEnd={pushUndoState}
         tool={tool}
         color={color}
         lineWidth={lineWidth}
