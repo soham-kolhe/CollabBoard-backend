@@ -77,7 +77,7 @@ export default function BoardRoom({ user }: BoardRoomProps) {
   return (
     <div className="relative w-screen h-screen bg-slate-50 overflow-hidden">
       {/* ─── Top Bar ─────────────────────────────────────────── */}
-      <header className="absolute top-0 left-0 right-0 z-50 flex items-center justify-between px-4 py-2 bg-white/80 backdrop-blur-xl border-b border-slate-200 shadow-sm">
+      <header className="absolute top-0 left-0 right-0 z-[3000] flex items-center justify-between px-4 py-2 bg-white/80 backdrop-blur-xl border-b border-slate-200 shadow-sm">
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate('/')}
@@ -142,7 +142,7 @@ export default function BoardRoom({ user }: BoardRoomProps) {
 
       {/* ─── Collaborators Sidebar ───────────────────────────── */}
       {sidebarOpen && (
-        <aside className="absolute top-12 right-4 z-40 w-60 bg-white/90 backdrop-blur-xl border border-slate-200 rounded-2xl shadow-xl overflow-hidden">
+        <aside className="absolute top-12 left-4 z-[3000] w-60 bg-white/90 backdrop-blur-xl border border-slate-200 rounded-2xl shadow-xl overflow-hidden">
           <div className="px-4 py-3 border-b border-slate-100">
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />

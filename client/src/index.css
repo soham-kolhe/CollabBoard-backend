@@ -32,7 +32,7 @@ body,
 
 /* Our top bar should sit above tldraw's canvas but not menus */
 header.absolute.top-0 {
-  z-index: 300;
+  z-index: 9999 !important;
 }
 
 /* Collaborators sidebar */

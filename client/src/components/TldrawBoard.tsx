@@ -111,7 +111,6 @@ export default function TldrawBoard({ boardId, user, socket, usersInRoom, canDra
         onMount={handleMount}
         shapeUtils={defaultShapeUtils}
         autoFocus
-        inferDarkMode
       />
     </div>
   );
