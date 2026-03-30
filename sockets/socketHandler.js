@@ -35,79 +35,89 @@ export const socketHandler = (io) => {
   io.on('connection', (socket) => {
     // ─── Join Room ──────────────────────────────────────────────────
     socket.on('join-room', async ({ userName, roomId }) => {
-      const displayName = socket.jwtUserName || userName;
-
-      if (socket.userId) {
-        // Kick ghost socket for the authenticated user reconnecting
-        const oldSessions = await ActiveUser.find({ roomId, userId: socket.userId });
-        for (const old of oldSessions) {
-          io.to(old.socketId).emit('error', 'You joined from another tab or reconnected.');
-          io.sockets.sockets.get(old.socketId)?.leave(roomId);
-          await handleLeave(old.socketId, roomId);
-        }
-      } else {
-        // Prevent duplicate names for guests
-        const isDuplicate = await ActiveUser.findOne({
-          roomId,
-          userName: { $regex: new RegExp(`^${displayName}$`, 'i') },
-        });
-        if (isDuplicate) {
-          socket.emit('error', 'Username already taken in this room.');
+      try {
+        // 1. Basic Validation: Board check
+        const board = await Board.findOne({ boardId: roomId });
+        if (!board) {
+          socket.emit('error', 'Board not found.');
           return;
         }
-      }
 
-      // 1. Fetch Board
-      const board = await Board.findOne({ boardId: roomId });
-      if (!board) {
-        socket.emit('error', 'Board not found.');
-        return;
-      }
+        const displayName = socket.jwtUserName || userName;
+        const isOwner = socket.userId && socket.userId === board.ownerId.toString();
 
-      // 2. Check Ownership & Admin presence
-      const isOwner = socket.userId && socket.userId === board.ownerId.toString();
-      const adminSession = await ActiveUser.findOne({ roomId, role: 'Admin' });
-      
-      if (!isOwner && !adminSession) {
-        socket.emit('error', 'The admin has not joined the board yet.');
-        return;
-      }
-
-      // 3. Join the room
-      socket.join(roomId);
-
-      // 4. Track this board in the user's recent activity if not the owner
-      if (socket.userId && !isOwner) {
-        try {
-          await User.findByIdAndUpdate(socket.userId, { $addToSet: { joinedBoards: roomId } });
-        } catch (err) {
-          console.error('Failed to update joined boards:', err);
+        // 2. Check Admin Presence (If not owner)
+        const adminSession = await ActiveUser.findOne({ roomId, role: 'Admin' });
+        if (!isOwner && !adminSession) {
+          socket.emit('error', 'The admin has not joined the board yet.');
+          return;
         }
+
+        // 3. Ghost Session Cleanup (If authenticated user reconnects)
+        if (socket.userId) {
+          const oldSessions = await ActiveUser.find({ roomId, userId: socket.userId });
+
+          for (const old of oldSessions) {
+            // ⬇️ YE LINE ADD KARO: Agar wahi socketId hai jo abhi connect hui hai, toh skip karo
+            if (old.socketId === socket.id) continue;
+
+            // Sirf tab kick karo agar socketId alag ho (matlab dusra tab ho)
+            io.to(old.socketId).emit('error', 'You joined from another tab or reconnected.');
+
+            const oldSocket = io.sockets.sockets.get(old.socketId);
+            if (oldSocket) {
+              oldSocket.leave(roomId);
+            }
+
+            await ActiveUser.deleteOne({ socketId: old.socketId });
+          }
+        }
+
+        // 4. ROLE AND UPSERT (Ye main part hai - Do baar create nahi karna)
+        const role = isOwner ? 'Admin' : 'User';
+
+        // Ek hi baar update ya create (UPSERT) karein
+        await ActiveUser.findOneAndUpdate(
+          { socketId: socket.id },
+          {
+            socketId: socket.id,
+            roomId: roomId,
+            userId: socket.userId || null,
+            userName: displayName,
+            role: role,
+            canDraw: true,
+          },
+          { upsert: true, new: true }
+        );
+
+        // 5. Join Socket Room
+        socket.join(roomId);
+
+        // 6. Track Activity for non-owners
+        if (socket.userId && !isOwner) {
+          await User.findByIdAndUpdate(socket.userId, { $addToSet: { joinedBoards: roomId } }).catch(err =>
+            console.error('Failed to update joined boards:', err)
+          );
+        }
+
+        // 7. Load State (Canvas or Tldraw)
+        const drawing = await Drawing.findOne({ roomId });
+        if (drawing && drawing.snapshot) {
+          socket.emit('load-canvas', drawing.snapshot);
+        } else if (board.tldrawState) {
+          socket.emit('load-tldraw-state', board.tldrawState);
+        }
+
+        // 8. Success Response
+        socket.emit('joined', { role, userName: displayName, roomId });
+        io.to(roomId).emit('user_list', await getRoomUsers(roomId));
+
+        console.log(`✅ User ${displayName} (${role}) joined room: ${roomId}`);
+
+      } catch (err) {
+        console.error("❌ Socket Join Error:", err);
+        socket.emit('error', 'Internal server error during join.');
       }
-
-      // 5. Load persisted canvas/tldraw state
-      // Both legacy snapshot and new tldraw state are supported
-      const drawing = await Drawing.findOne({ roomId });
-      if (drawing && drawing.snapshot) {
-        socket.emit('load-canvas', drawing.snapshot);
-      } else if (board.tldrawState) {
-        socket.emit('load-tldraw-state', board.tldrawState);
-      }
-
-      // 6. Assign role
-      const role = isOwner ? 'Admin' : 'User';
-
-      await ActiveUser.create({
-        socketId: socket.id,
-        roomId,
-        userId: socket.userId || null,
-        userName: displayName,
-        role,
-        canDraw: true,
-      });
-
-      socket.emit('joined', { role, userName: displayName, roomId });
-      io.to(roomId).emit('user_list', await getRoomUsers(roomId));
     });
 
     // ─── Canvas Real-time Sync ──────────────────────────────────────
@@ -190,7 +200,7 @@ export const socketHandler = (io) => {
 
       const roomId = explicitRoomId || user.roomId;
       const role = user.role;
-      
+
       await ActiveUser.deleteOne({ socketId });
 
       if (role === 'Admin') {
@@ -208,8 +218,13 @@ export const socketHandler = (io) => {
       await handleLeave(socket.id, roomId);
     });
 
-    socket.on('disconnect', async () => {
-      await handleLeave(socket.id);
+    socket.on("disconnect", async () => {
+      try {
+        await ActiveUser.deleteOne({ socketId: socket.id });
+        console.log("User disconnected and removed from DB");
+      } catch (err) {
+        console.error("Disconnect Error:", err);
+      }
     });
   });
 };
