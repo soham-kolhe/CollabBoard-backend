@@ -13,8 +13,17 @@ dotenv.config();
 const app = express();
 
 // ─── CORS ───────────────────────────────────────────
+const allowedOrigins = [
+  "http://localhost:5173",
+  process.env.FRONTEND_URL
+];
+
+if (process.env.FRONTEND_URL && !allowedOrigins.includes(process.env.FRONTEND_URL)) {
+  allowedOrigins.push(process.env.FRONTEND_URL);
+}
+
 app.use(cors({
-  origin: `${process.env.FRONTEND_URL}`, // Apne frontend ka URL
+  origin: allowedOrigins,
   methods: ["GET", "POST", "PUT", "DELETE"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true
@@ -32,7 +41,7 @@ const server = createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:5173",
+    origin: allowedOrigins,
     methods: ["GET", "POST"],
     credentials: true,
   },
@@ -49,7 +58,7 @@ const startServer = async () => {
   const { default: ActiveUser } = await import('./models/ActiveUser.js');
   await ActiveUser.deleteMany({});
 
-  const PORT = process.env.PORT || 5001;
+  const PORT = process.env.PORT || 5000;
   server.listen(PORT, () => {
     console.log(`✅ Server running on port ${PORT}`);
   });
