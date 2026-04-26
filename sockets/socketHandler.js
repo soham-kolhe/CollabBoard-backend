@@ -2,7 +2,7 @@ import jwt from 'jsonwebtoken';
 import Board from '../models/Board.js';
 import User from '../models/User.js';
 import ActiveUser from '../models/ActiveUser.js';
-const JWT_SECRET = process.env.JWT_SECRET || 'wb_super_secret_key_change_in_prod';
+const JWT_SECRET = process.env.JWT_SECRET || 'good_being_good';
 
 const getRoomUsers = async (roomId) => {
   const usersList = await ActiveUser.find({ roomId });
@@ -203,7 +203,7 @@ export const socketHandler = (io) => {
 
     socket.on("disconnect", async () => {
       try {
-        await ActiveUser.deleteOne({ socketId: socket.id });
+        await handleLeave(socket.id);
         console.log("User disconnected and removed from DB");
       } catch (err) {
         console.error("Disconnect Error:", err);

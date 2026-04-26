@@ -1,6 +1,6 @@
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_SECRET = process.env.JWT_SECRET || 'good_being_good';
 
 /**
  * Express middleware that verifies Bearer JWT token from Authorization header.
