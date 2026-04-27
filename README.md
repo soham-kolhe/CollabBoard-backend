@@ -1,18 +1,6 @@
 # CollabBoard - Backend
 
-This repository contains the backend service for the Collaborative Board application. It provides REST APIs for authentication and board management, and a robust WebSocket server for real-time canvas synchronization.
-
-## 🚀 Tech Stack
-
-- **Node.js & Express**: API routing and middleware.
-- **Socket.io**: Real-time, bi-directional communication for collaborative drawing.
-- **MongoDB & Mongoose**: Database and ODM for storing users and persistent board data.
-- **JWT & bcryptjs**: Secure authentication and password hashing.
-- **Express Rate Limit**: API protection against brute-force attacks.
-
-## 📐 Architecture & Event Flow
-
-The diagram below illustrates the sequence of authentication and real-time collaboration:
+Node.js + Express backend with real-time Socket.io server & MongoDB persistence.
 
 ```mermaid
 sequenceDiagram
@@ -43,66 +31,43 @@ sequenceDiagram
     WS-->>Other Clients in Room: Broadcast 'draw'
 ```
 
-## 📁 Key Directories
-- `config/`: Database connection and other configuration setups.
-- `models/`: Mongoose schemas for User, Board, and ActiveUser.
-- `routes/`: Express API endpoints (/api/auth, /api/boards).
-- `sockets/`: Socket.io event handlers and real-time logic.
-- `middleware/`: Auth verification and rate limiters.
+## 🛠 Tech Stack
+Node.js • Express • Socket.io • MongoDB • JWT • bcryptjs
 
-## 🛠 API Endpoints
+## 📡 API Endpoints & WebSocket Events
 
-### Authentication (`/api/auth`)
+### Authentication
 | Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| POST | `/login` | Authenticate user & return JWT |
-| POST | `/register` | Register a new user |
+|--------|----------|-------------|
+| POST | /api/auth/login | Authenticate user & return JWT |
+| POST | /api/auth/register | Register new user |
 
-### Boards (`/api/boards`)
-| Method | Endpoint | Description | Auth Required |
-| :--- | :--- | :--- | :--- |
-| GET | `/` | Fetch all boards (owned & joined) | Yes |
-| POST | `/` | Create a new collaborative board | Yes |
-| DELETE | `/:boardId` | Delete a board (Owner only) | Yes |
+### Boards
+| Method | Endpoint | Auth Required | Description |
+|--------|----------|---------------|-------------|
+| GET | /api/boards | Yes | Fetch all boards |
+| POST | /api/boards | Yes | Create new board |
+| DELETE | /api/boards/:boardId | Yes | Delete board (owner only) |
 
-## 🔌 WebSocket Events (Socket.io)
-| Event | Type | Payload | Description |
-| :--- | :--- | :--- | :--- |
-| `join-room` | Listen | `{ userName, roomId }` | Initialize room join, auth check, and state recovery |
-| `draw-action` | Listen/Broadcast | `{ roomId, action }` | Sync real-time drawing actions |
-| `cursor-move` | Listen/Broadcast | `{ roomId, x, y }` | Real-time cursor tracking for all participants | 
+### WebSocket Events
+| Event | Type | Purpose |
+|-------|------|---------|
+| join-room | Listen | Initialize room, auth check, state recovery |
+| draw-action | Listen/Broadcast | Sync real-time drawing actions |
+| cursor-move | Listen/Broadcast | Real-time cursor tracking |
+| toggle-permission | Listen | Admin toggle for drawing rights |
+| user_list | Emit | Update online users list |
 
-| `toggle-permission` | Listen | `{ targetSocketId, roomId }` | Admin-only toggle for user drawing rights |
-| `user_list` | Emit | `Array<User>` | Update list of online users in the room |
-
-## 📜 Available Scripts
-
-- `npm start`: Runs the server in production mode using node server.js.
-- `npm run dev`: (Recommended for Dev) Runs the server using nodemon for auto-restarts.
-
-## 🔒 Security
-- Passwords are encrypted before saving using `bcryptjs`.
-- Sensitive routes and socket connections are protected via JSON Web Tokens (JWT).
-- API requests are rate-limited to prevent spam.
-
-> ### 💡 IMPORTANT / NOTES 
-> This repository contains the **Backend API only**.<br>
-> **CORS**: Ensure `FRONTEND_URL` matches your React app's URL exactly.<br>
-> **Database Cleanup**: On server start, the system automatically clears the `ActiveUser` collection to prevent zombie connection errors.<br>
-> The interactive **React + TypeScript frontend** can be found here:<br>
-> 👉 [Frontend](https://github.com/soham-kolhe/CollabBoard-frontend)
-
-## ⚙️ Setup & Installation
+## 🚀 Quick Start
 
 ### Prerequisites
-- Node.js (v18 or higher)
-- MongoDB (Local or Atlas instance)
-<hr>
+- Node.js v18+
+- MongoDB (Local or Atlas)
 
-1. **Clone the repository:**
+1. **Clone repository:**
    ```bash
-   git clone <your-repo-url>
-   cd collaborative-board-backend
+   git clone https://github.com/soham-kolhe/CollabBoard-backend
+   cd CollabBoard-backend
    ```
 
 2. **Install dependencies:**
@@ -110,18 +75,25 @@ sequenceDiagram
    npm install
    ```
 
-3. **Environment Variables:**
-   Create a `.env` file in the root directory based on `.env.example`:
+3. **Configure environment (.env):**
    ```env
    PORT=5000
    MONGODB_URI=your_mongodb_connection_string
-   JWT_SECRET=your_super_secret_key
+   JWT_SECRET=your_secret_key
    FRONTEND_URL=http://localhost:5173
    ```
 
-4. **Start the server:**
+4. **Run server:**
    ```bash
-   npm start
+   npm run dev
    ```
-## 💻 Created By
-Soham Kolhe
+
+## 🔒 Security
+Passwords encrypted with bcryptjs • JWT authentication for REST & WebSocket • Rate limiting on API endpoints • CORS validation
+
+## 🔗 Quick Links
+[Frontend](https://github.com/soham-kolhe/CollabBoard-frontend) | [Main Project](https://github.com/soham-kolhe/CollabBoard)
+
+---
+
+Created by: Soham Kolhe
