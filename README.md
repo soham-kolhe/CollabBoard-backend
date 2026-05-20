@@ -49,6 +49,11 @@ Node.js • Express • Socket.io • MongoDB • JWT • bcryptjs
 | POST | /api/boards | Yes | Create new board |
 | DELETE | /api/boards/:boardId | Yes | Delete board (owner only) |
 
+### AI Advisor
+| Method | Endpoint | Auth Required | Description |
+|--------|----------|---------------|-------------|
+| POST | /api/ai/:boardId/suggest | Yes | Request Gemini-powered design reviews/suggestions based on the board's elements summary (rate-limited) |
+
 ### WebSocket Events
 | Event | Type | Purpose |
 |-------|------|---------|
@@ -57,6 +62,11 @@ Node.js • Express • Socket.io • MongoDB • JWT • bcryptjs
 | cursor-move | Listen/Broadcast | Real-time cursor tracking |
 | toggle-permission | Listen | Admin toggle for drawing rights |
 | user_list | Emit | Update online users list |
+| note:create | Listen | Handle and persist new context note creation in MongoDB, then broadcast `note:created` to all clients |
+| note:update | Listen | Update existing context note content, positions, styling, then broadcast `note:updated` |
+| note:delete | Listen | Delete context note from MongoDB, then broadcast `note:deleted` |
+| note:load | Emit | Send existing context notes to a client upon joining a room |
+| admin-left | Emit | Notify all participants in a room when the admin exits |
 
 ## 🚀 Quick Start
 
@@ -81,6 +91,7 @@ Node.js • Express • Socket.io • MongoDB • JWT • bcryptjs
    MONGODB_URI=your_mongodb_connection_string
    JWT_SECRET=your_secret_key
    FRONTEND_URL=http://localhost:5173
+   GEMINI_API_KEY=your_gemini_api_key
    ```
 
 4. **Run server:**

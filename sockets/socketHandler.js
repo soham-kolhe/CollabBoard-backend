@@ -2,6 +2,7 @@ import jwt from 'jsonwebtoken';
 import Board from '../models/Board.js';
 import User from '../models/User.js';
 import ActiveUser from '../models/ActiveUser.js';
+import ContextNote from '../models/ContextNote.js';
 const JWT_SECRET = process.env.JWT_SECRET || 'good_being_good';
 
 const getRoomUsers = async (roomId) => {
@@ -103,6 +104,10 @@ export const socketHandler = (io) => {
           socket.emit('load-tldraw-state', board.tldrawState);
         }
 
+        // 7b. Load Context Notes for this board
+        const existingNotes = await ContextNote.find({ boardId: roomId }).lean();
+        socket.emit('note:load', { notes: existingNotes });
+
         // 8. Success Response
         socket.emit('joined', { role, userName: displayName, roomId });
         io.to(roomId).emit('user_list', await getRoomUsers(roomId));
@@ -133,6 +138,74 @@ export const socketHandler = (io) => {
     // ─── tldraw Real-time Sync (Legacy Support) ──────────────────────
     socket.on('tldraw-changes', ({ roomId, updates }) => {
       socket.to(roomId).emit('tldraw-changes', { updates, fromSocketId: socket.id });
+    });
+
+    // ─── Context Layer: Notes & Code Snippets ───────────────────────
+    socket.on('note:create', async ({ boardId, note }) => {
+      try {
+        const user = await ActiveUser.findOne({ socketId: socket.id });
+        const authorName = user?.userName || 'Anonymous';
+        const authorId = user?.userId || null;
+
+        const saved = await ContextNote.create({
+          boardId,
+          type: note.type || 'note',
+          content: note.content,
+          language: note.language || 'javascript',
+          color: note.color || '#fde68a',
+          x: note.x ?? 200,
+          y: note.y ?? 200,
+          width: note.width ?? 280,
+          authorName,
+          authorId,
+        });
+
+        // Broadcast to ALL in room (including sender for consistency)
+        io.to(boardId).emit('note:created', saved.toObject());
+      } catch (err) {
+        console.error('note:create error:', err);
+      }
+    });
+
+    socket.on('note:update', async ({ boardId, noteId, partial }) => {
+      try {
+        const user = await ActiveUser.findOne({ socketId: socket.id });
+        const note = await ContextNote.findOne({ noteId, boardId });
+        if (!note) return;
+
+        // Only author or Admin can update
+        const isAdmin = user?.role === 'Admin';
+        const isAuthor = user?.userId && String(note.authorId) === String(user.userId);
+        if (!isAdmin && !isAuthor) return;
+
+        const allowed = ['content', 'x', 'y', 'width', 'color', 'language'];
+        for (const key of allowed) {
+          if (partial[key] !== undefined) note[key] = partial[key];
+        }
+        note.updatedAt = new Date();
+        await note.save();
+
+        io.to(boardId).emit('note:updated', { noteId, partial });
+      } catch (err) {
+        console.error('note:update error:', err);
+      }
+    });
+
+    socket.on('note:delete', async ({ boardId, noteId }) => {
+      try {
+        const user = await ActiveUser.findOne({ socketId: socket.id });
+        const note = await ContextNote.findOne({ noteId, boardId });
+        if (!note) return;
+
+        const isAdmin = user?.role === 'Admin';
+        const isAuthor = user?.userId && String(note.authorId) === String(user.userId);
+        if (!isAdmin && !isAuthor) return;
+
+        await ContextNote.deleteOne({ noteId, boardId });
+        io.to(boardId).emit('note:deleted', { noteId });
+      } catch (err) {
+        console.error('note:delete error:', err);
+      }
     });
 
 
